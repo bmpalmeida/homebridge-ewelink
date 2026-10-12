@@ -128,27 +128,56 @@ describe('a gate controller shown as a garage, whose switch is the door state (#
     vi.useRealTimers()
   })
 
-  it('follows the switch both ways, including a change made outside HomeKit', async () => {
+  it('takes the state read at startup as it is, without a movement', async () => {
     const { device, accessory } = gate({ switchIsState: true })
 
-    await device.externalUpdate(open)
+    await device.externalUpdate({ switch: 'on' })
     expect(state(accessory, 'CurrentDoorState')).toBe(0)
     expect(state(accessory, 'TargetDoorState')).toBe(0)
 
-    await device.externalUpdate(closed)
+    await device.externalUpdate({ switch: 'off', doorState: 0 })
     expect(state(accessory, 'CurrentDoorState')).toBe(1)
     expect(state(accessory, 'TargetDoorState')).toBe(1)
   })
 
-  it('turns the switch on to open and off to close, and shows the move until the device reports', async () => {
-    const { device, accessory, platform } = gate({ switchIsState: true })
+  it('follows the switch both ways, moving for the operation time, including a change made outside HomeKit', async () => {
+    // The switch flips when the order is given, not when the gate has arrived
+    // (seen on a real gate taking about 15 s), so the door moves first
+    vi.useFakeTimers()
+    const { device, accessory } = gate({ switchIsState: true, operationTime: 150, operationTimeDown: 200 })
+    await device.externalUpdate({ switch: 'off' })
+
+    await device.externalUpdate(open)
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+    expect(state(accessory, 'TargetDoorState')).toBe(0)
+    vi.advanceTimersByTime(14900)
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+    vi.advanceTimersByTime(100)
+    expect(state(accessory, 'CurrentDoorState')).toBe(0)
+
     await device.externalUpdate(closed)
+    expect(state(accessory, 'CurrentDoorState')).toBe(3)
+    expect(state(accessory, 'TargetDoorState')).toBe(1)
+    vi.advanceTimersByTime(15000)
+    expect(state(accessory, 'CurrentDoorState')).toBe(3)
+    vi.advanceTimersByTime(5000)
+    expect(state(accessory, 'CurrentDoorState')).toBe(1)
+  })
+
+  it('turns the switch on to open and off to close, and settles after the operation time', async () => {
+    vi.useFakeTimers()
+    const { device, accessory, platform } = gate({ switchIsState: true, operationTime: 150 })
+    await device.externalUpdate({ switch: 'off' })
 
     await device.internalUpdate(0)
     expect(platform.sent.at(-1).params).toEqual({ switch: 'on' })
     expect(state(accessory, 'CurrentDoorState')).toBe(2)
 
+    // The device confirming the command does not restart the movement
+    vi.advanceTimersByTime(5000)
     await device.externalUpdate(open)
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+    vi.advanceTimersByTime(10000)
     expect(state(accessory, 'CurrentDoorState')).toBe(0)
 
     await device.internalUpdate(1)
@@ -160,12 +189,32 @@ describe('a gate controller shown as a garage, whose switch is the door state (#
   it('settles on the commanded switch if the device never reports back', async () => {
     vi.useFakeTimers()
     const { device, accessory } = gate({ switchIsState: true, operationTime: 150 })
-    await device.externalUpdate(closed)
+    await device.externalUpdate({ switch: 'off' })
 
     await device.internalUpdate(0)
     expect(state(accessory, 'CurrentDoorState')).toBe(2)
     vi.advanceTimersByTime(15000)
     expect(state(accessory, 'CurrentDoorState')).toBe(0)
+  })
+
+  it('turns round when a new report arrives mid-travel', async () => {
+    vi.useFakeTimers()
+    const { device, accessory } = gate({ switchIsState: true, operationTime: 150 })
+    await device.externalUpdate({ switch: 'off' })
+
+    await device.externalUpdate(open)
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+    vi.advanceTimersByTime(8000)
+
+    // Closed again from the remote before the gate finished opening: the
+    // opening timer is dropped and the closing one runs in full
+    await device.externalUpdate(closed)
+    expect(state(accessory, 'CurrentDoorState')).toBe(3)
+    expect(state(accessory, 'TargetDoorState')).toBe(1)
+    vi.advanceTimersByTime(8000)
+    expect(state(accessory, 'CurrentDoorState')).toBe(3)
+    vi.advanceTimersByTime(7000)
+    expect(state(accessory, 'CurrentDoorState')).toBe(1)
   })
 
   it('keeps the momentary behaviour when the option is off', async () => {

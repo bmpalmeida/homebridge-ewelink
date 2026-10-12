@@ -448,7 +448,7 @@
             "switchIsState": {
               "type": "boolean",
               "title": "Switch Is Door State",
-              "description": "For devices that report the door state on their own switch (on = open, off = closed), such as some electric gate controllers, instead of acting as a momentary pulse. HomeKit then follows the switch, and opening or closing turns the switch on or off. Not used when a contact sensor is defined.",
+              "description": "For devices that report the door state on their own switch (on = open, off = closed), such as some electric gate controllers, instead of acting as a momentary pulse. HomeKit then follows the switch, and opening or closing turns the switch on or off. As the switch changes when the order is given, the door shows as opening or closing for the operation time before it settles. Not used when a contact sensor is defined.",
               "condition": {
                 "functionBody": "return (model.singleDevices && model.singleDevices[arrayIndices] && ['garage'].includes(model.singleDevices[arrayIndices].showAs) && !model.singleDevices[arrayIndices].sensorId && !model.singleDevices[arrayIndices].ignoreDevice);"
               }
