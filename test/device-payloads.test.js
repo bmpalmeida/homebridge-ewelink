@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import deviceTypes from '../lib/device/index.js'
 import { buildHandler } from './build-handlers.js'
@@ -99,5 +99,87 @@ describe('a power-reporting outlet, on payloads from a real device', () => {
 
     await device.externalUpdate(payloads.s60tpfOff.params)
     expect(accessory.getService('Outlet').getCharacteristic('On').value).toBe(false)
+  })
+})
+
+describe('a gate controller shown as a garage, whose switch is the door state (#760)', () => {
+  const Handler = deviceTypes.sim.deviceGarageOne
+  const name = 'sim.deviceGarageOne'
+
+  // The electric gate controller (uiid 216) keeps its switch on while the gate
+  // is open and turns it off once closed. It also sends doorState, 0 when
+  // closed, whose other values are not known, so the handler ignores it.
+  const closed = { switch: 'off', doorState: 0, updateSource: 'WS' }
+  const open = { switch: 'on', updateSource: 'WS' }
+
+  function gate(settings) {
+    const built = buildHandler(name, Handler, {
+      deviceConf: { '10001abcde': { showAs: 'garage', ...settings } },
+    }, { eweUIID: 216 })
+    expect(built.error).toBeUndefined()
+    return built
+  }
+
+  const state = (accessory, char) => accessory.getService('GarageDoorOpener')
+    .getCharacteristic(char)
+    .value
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('follows the switch both ways, including a change made outside HomeKit', async () => {
+    const { device, accessory } = gate({ switchIsState: true })
+
+    await device.externalUpdate(open)
+    expect(state(accessory, 'CurrentDoorState')).toBe(0)
+    expect(state(accessory, 'TargetDoorState')).toBe(0)
+
+    await device.externalUpdate(closed)
+    expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    expect(state(accessory, 'TargetDoorState')).toBe(1)
+  })
+
+  it('turns the switch on to open and off to close, and shows the move until the device reports', async () => {
+    const { device, accessory, platform } = gate({ switchIsState: true })
+    await device.externalUpdate(closed)
+
+    await device.internalUpdate(0)
+    expect(platform.sent.at(-1).params).toEqual({ switch: 'on' })
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+
+    await device.externalUpdate(open)
+    expect(state(accessory, 'CurrentDoorState')).toBe(0)
+
+    await device.internalUpdate(1)
+    expect(platform.sent.at(-1).params).toEqual({ switch: 'off' })
+    expect(state(accessory, 'CurrentDoorState')).toBe(3)
+    device.destroy()
+  })
+
+  it('settles on the commanded switch if the device never reports back', async () => {
+    vi.useFakeTimers()
+    const { device, accessory } = gate({ switchIsState: true, operationTime: 150 })
+    await device.externalUpdate(closed)
+
+    await device.internalUpdate(0)
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+    vi.advanceTimersByTime(15000)
+    expect(state(accessory, 'CurrentDoorState')).toBe(0)
+  })
+
+  it('keeps the momentary behaviour when the option is off', async () => {
+    const { device, accessory, platform } = gate({})
+
+    // A switch reported off is not a pulse, so it is ignored as before
+    await device.externalUpdate(closed)
+    expect(state(accessory, 'CurrentDoorState')).toBe(1)
+
+    // Opening still sends a pulse and then waits out the operation time, so
+    // this only looks at the command rather than waiting for the result
+    device.internalUpdate(0)
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(platform.sent.at(-1).params).toEqual({ switch: 'on' })
+    expect(state(accessory, 'CurrentDoorState')).toBe(2)
   })
 })
