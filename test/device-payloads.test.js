@@ -102,19 +102,26 @@ describe('a power-reporting outlet, on payloads from a real device', () => {
   })
 })
 
-describe('a gate controller shown as a garage, whose switch is the door state (#760)', () => {
+describe('a gate controller shown as a garage, whose switch is the last order (#760)', () => {
   const Handler = deviceTypes.sim.deviceGarageOne
   const name = 'sim.deviceGarageOne'
 
-  // The electric gate controller (uiid 216) keeps its switch on while the gate
-  // is open and turns it off once closed. It also sends doorState, 0 when
-  // closed, whose other values are not known, so the handler ignores it.
+  // The electric gate controller (uiid 216) turns its switch on with an open
+  // order and off with a close order, as soon as the order is given. It also
+  // sends doorState, 0 on its closed limit and 1 off it. Sampled from a real
+  // gate over a full cycle: on/1 when opening, off/1 when the close order is
+  // given, off/0 about 16 s later once actually closed.
+  const opening = { switch: 'on', doorState: 1, updateSource: 'WS' }
+  const closing = { switch: 'off', doorState: 1, updateSource: 'WS' }
   const closed = { switch: 'off', doorState: 0, updateSource: 'WS' }
-  const open = { switch: 'on', updateSource: 'WS' }
+
+  // A device that only reports its switch
+  const on = { switch: 'on', updateSource: 'WS' }
+  const off = { switch: 'off', updateSource: 'WS' }
 
   function gate(settings) {
     const built = buildHandler(name, Handler, {
-      deviceConf: { '10001abcde': { showAs: 'garage', ...settings } },
+      deviceConf: { '10001abcde': { showAs: 'garage', switchIsState: true, operationTime: 150, ...settings } },
     }, { eweUIID: 216 })
     expect(built.error).toBeUndefined()
     return built
@@ -128,97 +135,249 @@ describe('a gate controller shown as a garage, whose switch is the door state (#
     vi.useRealTimers()
   })
 
-  it('takes the state read at startup as it is, without a movement', async () => {
-    const { device, accessory } = gate({ switchIsState: true })
+  describe('with only the switch reported', () => {
+    it('takes the state read at startup as it is, without a movement', async () => {
+      const { device, accessory } = gate({})
 
-    await device.externalUpdate({ switch: 'on' })
-    expect(state(accessory, 'CurrentDoorState')).toBe(0)
-    expect(state(accessory, 'TargetDoorState')).toBe(0)
+      await device.externalUpdate({ switch: 'on' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      expect(state(accessory, 'TargetDoorState')).toBe(0)
 
-    await device.externalUpdate({ switch: 'off', doorState: 0 })
-    expect(state(accessory, 'CurrentDoorState')).toBe(1)
-    expect(state(accessory, 'TargetDoorState')).toBe(1)
+      await device.externalUpdate({ switch: 'off' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
+    })
+
+    it('follows the switch both ways, moving for the operation time, including a change made outside HomeKit', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({ operationTimeDown: 200 })
+      await device.externalUpdate({ switch: 'off' })
+
+      await device.externalUpdate(on)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      expect(state(accessory, 'TargetDoorState')).toBe(0)
+      vi.advanceTimersByTime(14900)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(100)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+
+      await device.externalUpdate(off)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
+      vi.advanceTimersByTime(15000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      vi.advanceTimersByTime(5000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
+
+    it('turns the switch on to open and off to close, and settles after the operation time', async () => {
+      vi.useFakeTimers()
+      const { device, accessory, platform } = gate({})
+      await device.externalUpdate({ switch: 'off' })
+
+      await device.internalUpdate(0)
+      expect(platform.sent.at(-1).params).toEqual({ switch: 'on' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+
+      // The device confirming the command does not restart the movement
+      vi.advanceTimersByTime(5000)
+      await device.externalUpdate(on)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(10000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+
+      await device.internalUpdate(1)
+      expect(platform.sent.at(-1).params).toEqual({ switch: 'off' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      device.destroy()
+    })
+
+    it('settles on the commanded switch if the device never reports back', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off' })
+
+      await device.internalUpdate(0)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(15000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+    })
+
+    it('turns round when a new report arrives mid-travel', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off' })
+
+      await device.externalUpdate(on)
+      vi.advanceTimersByTime(8000)
+
+      // Closed again from the remote before the gate finished opening: the
+      // opening timer is dropped and the closing one runs in full
+      await device.externalUpdate(off)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
+      vi.advanceTimersByTime(8000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      vi.advanceTimersByTime(7000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
   })
 
-  it('follows the switch both ways, moving for the operation time, including a change made outside HomeKit', async () => {
-    // The switch flips when the order is given, not when the gate has arrived
-    // (seen on a real gate taking about 15 s), so the door moves first
-    vi.useFakeTimers()
-    const { device, accessory } = gate({ switchIsState: true, operationTime: 150, operationTimeDown: 200 })
-    await device.externalUpdate({ switch: 'off' })
+  describe('with the closed limit (doorState) reported', () => {
+    it('reads the state at startup: closed, open, or stopped part way after a close order', async () => {
+      const shut = gate({})
+      await shut.device.externalUpdate({ switch: 'off', doorState: 0 })
+      expect(state(shut.accessory, 'CurrentDoorState')).toBe(1)
+      expect(state(shut.accessory, 'TargetDoorState')).toBe(1)
 
-    await device.externalUpdate(open)
-    expect(state(accessory, 'CurrentDoorState')).toBe(2)
-    expect(state(accessory, 'TargetDoorState')).toBe(0)
-    vi.advanceTimersByTime(14900)
-    expect(state(accessory, 'CurrentDoorState')).toBe(2)
-    vi.advanceTimersByTime(100)
-    expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      const wide = gate({})
+      await wide.device.externalUpdate({ switch: 'on', doorState: 1 })
+      expect(state(wide.accessory, 'CurrentDoorState')).toBe(0)
+      expect(state(wide.accessory, 'TargetDoorState')).toBe(0)
 
-    await device.externalUpdate(closed)
-    expect(state(accessory, 'CurrentDoorState')).toBe(3)
-    expect(state(accessory, 'TargetDoorState')).toBe(1)
-    vi.advanceTimersByTime(15000)
-    expect(state(accessory, 'CurrentDoorState')).toBe(3)
-    vi.advanceTimersByTime(5000)
-    expect(state(accessory, 'CurrentDoorState')).toBe(1)
-  })
+      // Off the closed limit after a close order: still closing or stopped,
+      // never claimed open
+      const between = gate({})
+      await between.device.externalUpdate({ switch: 'off', doorState: 1 })
+      expect(state(between.accessory, 'CurrentDoorState')).toBe(4)
+      expect(state(between.accessory, 'TargetDoorState')).toBe(1)
+    })
 
-  it('turns the switch on to open and off to close, and settles after the operation time', async () => {
-    vi.useFakeTimers()
-    const { device, accessory, platform } = gate({ switchIsState: true, operationTime: 150 })
-    await device.externalUpdate({ switch: 'off' })
+    it('opens for the operation time, then stays closing until the closed limit confirms it (the real cycle)', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off', doorState: 0 })
 
-    await device.internalUpdate(0)
-    expect(platform.sent.at(-1).params).toEqual({ switch: 'on' })
-    expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      // 21:26:03 open order
+      await device.externalUpdate(opening)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      expect(state(accessory, 'TargetDoorState')).toBe(0)
+      vi.advanceTimersByTime(15000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
 
-    // The device confirming the command does not restart the movement
-    vi.advanceTimersByTime(5000)
-    await device.externalUpdate(open)
-    expect(state(accessory, 'CurrentDoorState')).toBe(2)
-    vi.advanceTimersByTime(10000)
-    expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      // 21:26:20 close order, the gate still open
+      vi.advanceTimersByTime(2000)
+      await device.externalUpdate(closing)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
 
-    await device.internalUpdate(1)
-    expect(platform.sent.at(-1).params).toEqual({ switch: 'off' })
-    expect(state(accessory, 'CurrentDoorState')).toBe(3)
-    device.destroy()
-  })
+      // Repeated reports while it moves change nothing, and the operation time
+      // alone does not close it
+      vi.advanceTimersByTime(15000)
+      await device.externalUpdate(closing)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
 
-  it('settles on the commanded switch if the device never reports back', async () => {
-    vi.useFakeTimers()
-    const { device, accessory } = gate({ switchIsState: true, operationTime: 150 })
-    await device.externalUpdate({ switch: 'off' })
+      // 21:26:36 the closed limit
+      vi.advanceTimersByTime(1000)
+      await device.externalUpdate(closed)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
 
-    await device.internalUpdate(0)
-    expect(state(accessory, 'CurrentDoorState')).toBe(2)
-    vi.advanceTimersByTime(15000)
-    expect(state(accessory, 'CurrentDoorState')).toBe(0)
-  })
+      // No timer left to undo it
+      vi.advanceTimersByTime(60000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
 
-  it('turns round when a new report arrives mid-travel', async () => {
-    vi.useFakeTimers()
-    const { device, accessory } = gate({ switchIsState: true, operationTime: 150 })
-    await device.externalUpdate({ switch: 'off' })
+    it('shows stopped if the closed limit never comes, and closed once it does', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({ operationTimeDown: 200 })
+      await device.externalUpdate({ switch: 'on', doorState: 1 })
 
-    await device.externalUpdate(open)
-    expect(state(accessory, 'CurrentDoorState')).toBe(2)
-    vi.advanceTimersByTime(8000)
+      await device.externalUpdate(closing)
+      vi.advanceTimersByTime(39900)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      vi.advanceTimersByTime(100)
+      expect(state(accessory, 'CurrentDoorState')).toBe(4)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
 
-    // Closed again from the remote before the gate finished opening: the
-    // opening timer is dropped and the closing one runs in full
-    await device.externalUpdate(closed)
-    expect(state(accessory, 'CurrentDoorState')).toBe(3)
-    expect(state(accessory, 'TargetDoorState')).toBe(1)
-    vi.advanceTimersByTime(8000)
-    expect(state(accessory, 'CurrentDoorState')).toBe(3)
-    vi.advanceTimersByTime(7000)
-    expect(state(accessory, 'CurrentDoorState')).toBe(1)
+      // A repeated report does not start a new closing
+      await device.externalUpdate(closing)
+      expect(state(accessory, 'CurrentDoorState')).toBe(4)
+
+      await device.externalUpdate(closed)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
+
+    it('closes from HomeKit and waits for the closed limit', async () => {
+      vi.useFakeTimers()
+      const { device, accessory, platform } = gate({})
+      await device.externalUpdate({ switch: 'on', doorState: 1 })
+
+      await device.internalUpdate(1)
+      expect(platform.sent.at(-1).params).toEqual({ switch: 'off' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+
+      await device.externalUpdate(closing)
+      vi.advanceTimersByTime(20000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+
+      await device.externalUpdate(closed)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
+
+    it('turns round when a new order arrives mid-travel', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off', doorState: 0 })
+
+      // Close order while opening: closing, and only the limit closes it
+      await device.externalUpdate(opening)
+      vi.advanceTimersByTime(8000)
+      await device.externalUpdate(closing)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+      vi.advanceTimersByTime(15000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+
+      // Open order while closing: opening, and open after the full opening time
+      await device.externalUpdate(opening)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      expect(state(accessory, 'TargetDoorState')).toBe(0)
+      vi.advanceTimersByTime(14900)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(100)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+    })
+
+    it('keeps the last value of each key when a report carries only one', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off', doorState: 0 })
+
+      // The open order alone, the gate still on its limit: opening
+      await device.externalUpdate(on)
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+
+      // Then the limit alone, the gate leaving it: still opening, same timer
+      vi.advanceTimersByTime(3000)
+      await device.externalUpdate({ doorState: 1, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(12000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+
+      // The close order alone, the last doorState still 1: closing
+      await device.externalUpdate(off)
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
+
+      // The limit alone, with the last switch off: closed
+      await device.externalUpdate({ doorState: 0, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
+
+    it('settles on closed if an open order never takes the gate off its closed limit', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off', doorState: 0 })
+
+      await device.externalUpdate({ switch: 'on', doorState: 0, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(15000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+      expect(state(accessory, 'TargetDoorState')).toBe(1)
+    })
   })
 
   it('keeps the momentary behaviour when the option is off', async () => {
-    const { device, accessory, platform } = gate({})
+    const { device, accessory, platform } = gate({ switchIsState: false })
 
     // A switch reported off is not a pulse, so it is ignored as before
     await device.externalUpdate(closed)
