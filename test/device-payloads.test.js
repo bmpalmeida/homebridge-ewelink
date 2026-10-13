@@ -224,7 +224,7 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
   })
 
   describe('with the closed limit (doorState) reported', () => {
-    it('reads the state at startup: closed, open, or stopped part way after a close order', async () => {
+    it('reads the state at startup: closed on the closed limit, open otherwise', async () => {
       const shut = gate({})
       await shut.device.externalUpdate({ switch: 'off', doorState: 0 })
       expect(state(shut.accessory, 'CurrentDoorState')).toBe(1)
@@ -235,12 +235,11 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
       expect(state(wide.accessory, 'CurrentDoorState')).toBe(0)
       expect(state(wide.accessory, 'TargetDoorState')).toBe(0)
 
-      // Off the closed limit after a close order: still closing or stopped,
-      // never claimed open
+      // Off the closed limit after a close order: not closed, so open
       const between = gate({})
       await between.device.externalUpdate({ switch: 'off', doorState: 1 })
-      expect(state(between.accessory, 'CurrentDoorState')).toBe(4)
-      expect(state(between.accessory, 'TargetDoorState')).toBe(1)
+      expect(state(between.accessory, 'CurrentDoorState')).toBe(0)
+      expect(state(between.accessory, 'TargetDoorState')).toBe(0)
     })
 
     it('opens for the operation time, then stays closing until the closed limit confirms it (the real cycle)', async () => {
@@ -278,7 +277,7 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
       expect(state(accessory, 'CurrentDoorState')).toBe(1)
     })
 
-    it('shows stopped if the closed limit never comes, and closed once it does', async () => {
+    it('shows open if the closed limit never comes, and closed once it does', async () => {
       vi.useFakeTimers()
       const { device, accessory } = gate({ operationTimeDown: 200 })
       await device.externalUpdate({ switch: 'on', doorState: 1 })
@@ -287,12 +286,11 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
       vi.advanceTimersByTime(39900)
       expect(state(accessory, 'CurrentDoorState')).toBe(3)
       vi.advanceTimersByTime(100)
-      expect(state(accessory, 'CurrentDoorState')).toBe(4)
-      expect(state(accessory, 'TargetDoorState')).toBe(1)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
 
       // A repeated report does not start a new closing
       await device.externalUpdate(closing)
-      expect(state(accessory, 'CurrentDoorState')).toBe(4)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
 
       await device.externalUpdate(closed)
       expect(state(accessory, 'CurrentDoorState')).toBe(1)
@@ -378,6 +376,17 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
 
       // A late report with only the switch does not bring back the old limit
       await device.externalUpdate({ switch: 'on', updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+    })
+
+    it('shows a gate that leaves its closed limit without an order as opening, then open', async () => {
+      // e.g. opened by hand, or the open order's report lost
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate({ switch: 'off', doorState: 0 })
+      await device.externalUpdate({ doorState: 1, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(15000)
       expect(state(accessory, 'CurrentDoorState')).toBe(0)
     })
 

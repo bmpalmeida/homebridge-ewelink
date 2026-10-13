@@ -448,7 +448,7 @@
             "switchIsState": {
               "type": "boolean",
               "title": "Switch Is Door State",
-              "description": "For devices whose switch stays on after an open order and off after a close order instead of acting as a momentary pulse, such as the electric gate controller. Opening or closing from HomeKit turns the switch on or off, and orders given elsewhere are followed too. Opening is shown for the operation time. If the device reports its closed limit (doorState), closing lasts until the gate is actually closed, and the gate is shown as stopped if that has not happened after twice the closing time; otherwise closing is also shown for the operation time. Not used when a contact sensor is defined.",
+              "description": "For devices whose switch stays on after an open order and off after a close order instead of acting as a momentary pulse, such as the electric gate controller. Opening or closing from HomeKit turns the switch on or off, and orders given elsewhere are followed too. Opening is shown for the operation time. If the device reports its closed limit (doorState), the gate is closed only when that limit says so and open otherwise, even if only part way: closing lasts until the closed limit is reached, and the gate is shown as open if that has not happened after twice the closing time. Without doorState, closing is also shown for the operation time. Not used when a contact sensor is defined.",
               "condition": {
                 "functionBody": "return (model.singleDevices && model.singleDevices[arrayIndices] && ['garage'].includes(model.singleDevices[arrayIndices].showAs) && !model.singleDevices[arrayIndices].sensorId && !model.singleDevices[arrayIndices].ignoreDevice);"
               }
