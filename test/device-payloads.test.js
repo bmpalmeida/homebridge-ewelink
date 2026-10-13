@@ -363,16 +363,36 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
       expect(state(accessory, 'CurrentDoorState')).toBe(1)
     })
 
-    it('settles on closed if an open order never takes the gate off its closed limit', async () => {
+    it('ends an opening as open even if the closed limit report comes late (13/10)', async () => {
+      // 13/10 08:16:57: opened from HomeKit; the report that the gate had left its
+      // closed limit came after the 15 s opening time, and the gate was shown
+      // closed while it was open
       vi.useFakeTimers()
       const { device, accessory } = gate({})
       await device.externalUpdate({ switch: 'off', doorState: 0 })
 
-      await device.externalUpdate({ switch: 'on', doorState: 0, updateSource: 'WS' })
+      await device.internalUpdate(0)
       expect(state(accessory, 'CurrentDoorState')).toBe(2)
       vi.advanceTimersByTime(15000)
-      expect(state(accessory, 'CurrentDoorState')).toBe(1)
-      expect(state(accessory, 'TargetDoorState')).toBe(1)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+
+      // A late report with only the switch does not bring back the old limit
+      await device.externalUpdate({ switch: 'on', updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+    })
+
+    it('always sends a close when the gate is off its closed limit, even if shown closed (13/10)', async () => {
+      vi.useFakeTimers()
+      const { device, accessory, platform } = gate({})
+      await device.externalUpdate({ switch: 'off', doorState: 0 })
+      await device.externalUpdate({ doorState: 1 }) // off the limit, shown wrongly
+      accessory.getService('GarageDoorOpener').updateCharacteristic('CurrentDoorState', 1)
+      const before = platform.sent.length
+
+      await device.internalUpdate(1)
+      expect(platform.sent.length).toBe(before + 1)
+      expect(platform.sent.at(-1).params).toEqual({ switch: 'off' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(3)
     })
   })
 
