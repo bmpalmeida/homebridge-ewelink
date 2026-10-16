@@ -460,11 +460,28 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
       await device.externalUpdate({ doorState: 1 }) // off the limit, shown wrongly
       accessory.getService('GarageDoorOpener').updateCharacteristic('CurrentDoorState', 1)
       const before = platform.sent.length
+      device.orderGapMs = 0
 
       await device.internalUpdate(1)
-      expect(platform.sent.length).toBe(before + 1)
-      expect(platform.sent.at(-1).params).toEqual({ switch: 'off' })
+      // its last order was already off, so it only moves after an on then an off (16/10)
+      expect(platform.sent.slice(before).map(x => x.params)).toEqual([{ switch: 'on' }, { switch: 'off' }])
       expect(state(accessory, 'CurrentDoorState')).toBe(3)
+    })
+
+    it('sends the opposite order first when the last order is already the wanted one (16/10)', async () => {
+      const { device, accessory, platform } = gate({})
+      // the gate was opened (on) and later closed by its remote: the switch stays on
+      await device.externalUpdate({ switch: 'on', doorState: 0 })
+      accessory.getService('GarageDoorOpener').updateCharacteristic('CurrentDoorState', 1)
+      const before = platform.sent.length
+      device.orderGapMs = 0
+
+      await device.internalUpdate(0)
+      expect(platform.sent.slice(before).map(x => x.params)).toEqual([{ switch: 'off' }, { switch: 'on' }])
+      // the echo of the off is not taken as a close
+      await device.externalUpdate({ switch: 'off', updateSource: 'WS' })
+      expect(state(accessory, 'TargetDoorState')).toBe(0)
+      device.destroy()
     })
   })
 
