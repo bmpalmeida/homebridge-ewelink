@@ -119,7 +119,7 @@ export function buildHandler(name, Handler, platformOverrides = {}, contextOverr
   // process alive after the test that built them has finished
   const cleanup = () => {
     clearInterval(accessory.refreshInterval)
-    ;['intervalPoll', 'intervalPower', 'initialTimeout'].forEach((timer) => {
+    ;['intervalPoll', 'intervalPower', 'initialTimeout', 'intervalCloud', 'cloudTimeout'].forEach((timer) => {
       clearInterval(accessory[timer])
       clearTimeout(accessory[timer])
     })
@@ -127,7 +127,7 @@ export function buildHandler(name, Handler, platformOverrides = {}, contextOverr
 
   try {
     const device = new Handler(platform, accessory, ...extra)
-    ;['intervalPoll', 'intervalPower', 'initialTimeout'].forEach((timer) => {
+    ;['intervalPoll', 'intervalPower', 'initialTimeout', 'intervalCloud', 'cloudTimeout'].forEach((timer) => {
       clearInterval(device[timer])
       clearTimeout(device[timer])
     })

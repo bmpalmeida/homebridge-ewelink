@@ -468,6 +468,28 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
       expect(state(accessory, 'CurrentDoorState')).toBe(3)
     })
 
+    it('takes the state from the cloud when the device does not answer, and orders through http if the web socket fails (16/10)', async () => {
+      const http = []
+      const { device, accessory, platform } = gate({})
+      platform.httpClient = {
+        getDeviceParams: async () => ({ switch: 'on', doorState: 0 }),
+        updateDevice: async (id, params) => http.push(params),
+      }
+      // shown open (cached), but the gate is on its closed limit
+      accessory.getService('GarageDoorOpener').updateCharacteristic('CurrentDoorState', 0)
+      accessory.getService('GarageDoorOpener').updateCharacteristic('TargetDoorState', 0)
+      await device.readCloud()
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+
+      platform.sendDeviceUpdate = async () => {
+        throw new Error('request timeout [504]')
+      }
+      device.orderGapMs = 0
+      await device.internalUpdate(0)
+      expect(http).toEqual([{ switch: 'off' }, { switch: 'on' }])
+      device.destroy()
+    })
+
     it('sends the opposite order first when the last order is already the wanted one (16/10)', async () => {
       const { device, accessory, platform } = gate({})
       // the gate was opened (on) and later closed by its remote: the switch stays on
