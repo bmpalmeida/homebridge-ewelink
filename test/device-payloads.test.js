@@ -224,6 +224,40 @@ describe('a gate controller shown as a garage, whose switch is the last order (#
   })
 
   describe('with the closed limit (doorState) reported', () => {
+    it('stays open when the closed limit report after an open order is the old one (16/10)', async () => {
+      // A real morning: open order at 07:39:46, the controller kept reporting
+      // its closed limit until 07:40:11 (25 s later), and HomeKit showed the
+      // gate closed while it opened
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate(closed)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+      await device.externalUpdate({ switch: 'on', doorState: 0, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(2)
+      vi.advanceTimersByTime(15000)
+      await device.externalUpdate({ switch: 'on', doorState: 0, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      vi.advanceTimersByTime(10000)
+      await device.externalUpdate({ doorState: 0, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      await device.externalUpdate(opening)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      // later, a fresh closed limit (it closed by itself): closed
+      await device.externalUpdate({ switch: 'on', doorState: 0, updateSource: 'WS' })
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
+
+    it('is closed again if an open order never takes the gate off its closed limit', async () => {
+      vi.useFakeTimers()
+      const { device, accessory } = gate({})
+      await device.externalUpdate(closed)
+      await device.externalUpdate({ switch: 'on', doorState: 0, updateSource: 'WS' })
+      vi.advanceTimersByTime(60000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(0)
+      vi.advanceTimersByTime(60000)
+      expect(state(accessory, 'CurrentDoorState')).toBe(1)
+    })
+
     it('reads the state at startup: closed on the closed limit, open otherwise', async () => {
       const shut = gate({})
       await shut.device.externalUpdate({ switch: 'off', doorState: 0 })
