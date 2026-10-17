@@ -445,6 +445,14 @@
                 "functionBody": "return (model.singleDevices && model.singleDevices[arrayIndices] && ['garage'].includes(model.singleDevices[arrayIndices].showAs) && !model.singleDevices[arrayIndices].sensorId && !model.singleDevices[arrayIndices].ignoreDevice);"
               }
             },
+            "switchIsState": {
+              "type": "boolean",
+              "title": "Switch Is Door State",
+              "description": "For electric gate controllers (e.g. the eWeLink gate module, uiid 216) whose switch is the last order (on opens, off closes) and which only act when the order changes. Each order is sent as the opposite one and then the wanted one, through the web socket and, if that fails, the cloud http api, a few times. The gate is shown closed only on its closed limit (doorState 0) and open otherwise, moving for the operation time after any order. The last report is also read from the cloud every minute. Not used when a contact sensor is defined.",
+              "condition": {
+                "functionBody": "return (model.singleDevices && model.singleDevices[arrayIndices] && ['garage'].includes(model.singleDevices[arrayIndices].showAs) && !model.singleDevices[arrayIndices].sensorId && !model.singleDevices[arrayIndices].ignoreDevice);"
+              }
+            },
             "sensorId": {
               "type": "string",
               "title": "Sensor",
@@ -1673,6 +1681,7 @@
             "singleDevices[].isInched",
             "singleDevices[].operationTime",
             "singleDevices[].operationTimeDown",
+            "singleDevices[].switchIsState",
             "singleDevices[].sensorId",
             "singleDevices[].hideSensor",
             "singleDevices[].obstructId",

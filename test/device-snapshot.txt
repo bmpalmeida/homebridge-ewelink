@@ -283,6 +283,16 @@ sim.deviceGarageFour
     ObstructionDetected
     TargetDoorState
 
+sim.deviceGarageGate
+  logging: on
+  service: GarageDoorOpener
+    CurrentDoorState
+    LastActivation
+    ObstructionDetected
+    ResetTotal
+    TargetDoorState
+    TimesOpened
+
 sim.deviceGarageOdSwitch
 
 sim.deviceGarageOne
