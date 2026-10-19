@@ -445,6 +445,14 @@
                 "functionBody": "return (model.singleDevices && model.singleDevices[arrayIndices] && ['garage'].includes(model.singleDevices[arrayIndices].showAs) && !model.singleDevices[arrayIndices].sensorId && !model.singleDevices[arrayIndices].ignoreDevice);"
               }
             },
+            "switchIsState": {
+              "type": "boolean",
+              "title": "Switch Is Door State",
+              "description": "For devices whose switch is the state rather than a momentary pulse, such as the electric gate controller. Open sends switch on and close sends switch off, exactly as the plain switch does, once per tap. The gate is shown closed when the device reports doorState 0 and open when it reports 1; without doorState it follows the switch. Not used when a contact sensor is defined.",
+              "condition": {
+                "functionBody": "return (model.singleDevices && model.singleDevices[arrayIndices] && ['garage'].includes(model.singleDevices[arrayIndices].showAs) && !model.singleDevices[arrayIndices].sensorId && !model.singleDevices[arrayIndices].ignoreDevice);"
+              }
+            },
             "sensorId": {
               "type": "string",
               "title": "Sensor",
@@ -1673,6 +1681,7 @@
             "singleDevices[].isInched",
             "singleDevices[].operationTime",
             "singleDevices[].operationTimeDown",
+            "singleDevices[].switchIsState",
             "singleDevices[].sensorId",
             "singleDevices[].hideSensor",
             "singleDevices[].obstructId",
